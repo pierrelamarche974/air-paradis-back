@@ -8,12 +8,73 @@ import pickle
 import numpy as np
 import os
 import tensorflow as tf
+from opencensus.ext.azure.log_exporter import AzureLogHandler
+from opencensus.ext.azure import metrics_exporter
+from opencensus.stats import aggregation, measure, stats, view
+from opencensus.tags import tag_map as tag_map_module
+import logging
+from datetime import datetime
 
 # Configuration
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "model")
 MODEL_PATH = os.path.join(MODEL_DIR, "lstm_fasttext.tflite")
 TOKENIZER_PATH = os.path.join(MODEL_DIR, "tokenizer.pkl")
 CONFIG_PATH = os.path.join(MODEL_DIR, "config.pkl")
+
+# Azure Application Insights
+APPINSIGHTS_CONNECTION_STRING = os.environ.get("APPINSIGHTS_CONNECTION_STRING", "")
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+if APPINSIGHTS_CONNECTION_STRING:
+    azure_handler = AzureLogHandler(connection_string=APPINSIGHTS_CONNECTION_STRING)
+    logger.addHandler(azure_handler)
+
+    exporter = metrics_exporter.new_metrics_exporter(
+        connection_string=APPINSIGHTS_CONNECTION_STRING
+    )
+
+    bad_prediction_measure = measure.MeasureInt(
+        "bad_predictions",
+        "Nombre de prédictions signalées comme incorrectes",
+        "predictions"
+    )
+
+    bad_prediction_view = view.View(
+        "bad_predictions_count",
+        "Compteur de mauvaises prédictions",
+        [],
+        bad_prediction_measure,
+        aggregation.CountAggregation()
+    )
+
+    stats.stats.view_manager.register_view(bad_prediction_view)
+    stats.stats.view_manager.register_exporter(exporter)
+
+    mmap = stats.stats.stats_recorder.new_measurement_map()
+    tmap = tag_map_module.TagMap()
+
+
+def log_bad_prediction(text: str, predicted: int, correct: int):
+    """Enregistre une mauvaise prédiction dans Application Insights."""
+    custom_dimensions = {
+        "tweet_text": text[:500],
+        "predicted_sentiment": "positif" if predicted == 1 else "negatif",
+        "correct_sentiment": "positif" if correct == 1 else "negatif",
+        "timestamp": datetime.utcnow().isoformat(),
+        "event_type": "bad_prediction"
+    }
+
+    logger.warning(
+        "Mauvaise prédiction signalée",
+        extra={"custom_dimensions": custom_dimensions}
+    )
+
+    if APPINSIGHTS_CONNECTION_STRING:
+        mmap.measure_int_put(bad_prediction_measure, 1)
+        mmap.record(tmap)
+
 
 app = FastAPI(
     title="Air Paradis - Sentiment Analysis API",
@@ -123,6 +184,18 @@ def predict(data: TextInput):
 
     try:
         pred, proba = predict_single(data.text)
+
+        logger.info(
+            "Prédiction effectuée",
+            extra={
+                "custom_dimensions": {
+                    "prediction": pred,
+                    "confidence": proba,
+                    "text_length": len(data.text)
+                }
+            }
+        )
+
         return {
             "text": data.text,
             "sentiment": "Négatif" if pred == 0 else "Positif",
@@ -141,9 +214,14 @@ def predict(data: TextInput):
 def feedback(data: FeedbackInput):
     """Enregistre un feedback utilisateur pour une prédiction incorrecte."""
     try:
+        log_bad_prediction(
+            text=data.text,
+            predicted=data.predicted_sentiment,
+            correct=data.correct_sentiment
+        )
         return {
             "status": "success",
-            "message": "Feedback enregistré"
+            "message": "Feedback enregistré dans Application Insights"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
