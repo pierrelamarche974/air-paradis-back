@@ -28,6 +28,14 @@ def test_predict_empty():
     assert response.status_code == 400
 
 
+def test_feedback():
+    response = client.post("/feedback", json={
+        "text": "Test", "predicted_sentiment": 1, "correct_sentiment": 0
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
 if __name__ == "__main__":
     test_health()
     print("test_health OK")
@@ -37,4 +45,6 @@ if __name__ == "__main__":
     print("test_predict_positive OK")
     test_predict_empty()
     print("test_predict_empty OK")
+    test_feedback()
+    print("test_feedback OK")
     print("Tous les tests sont passes")
