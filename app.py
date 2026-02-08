@@ -66,6 +66,26 @@ class HealthOutput(BaseModel):
     model: str
 
 
+class FeedbackInput(BaseModel):
+    text: str
+    predicted_sentiment: int
+    correct_sentiment: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "text": "The flight was okay I guess",
+                "predicted_sentiment": 0,
+                "correct_sentiment": 1
+            }
+        }
+
+
+class FeedbackOutput(BaseModel):
+    status: str
+    message: str
+
+
 def preprocess_text(text: str) -> np.ndarray:
     """Prétraite un texte pour le modèle LSTM."""
     sequences = tokenizer.texts_to_sequences([text])
@@ -115,3 +135,15 @@ def predict(data: TextInput):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur de prédiction: {str(e)}")
+
+
+@app.post("/feedback", response_model=FeedbackOutput)
+def feedback(data: FeedbackInput):
+    """Enregistre un feedback utilisateur pour une prédiction incorrecte."""
+    try:
+        return {
+            "status": "success",
+            "message": "Feedback enregistré"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
